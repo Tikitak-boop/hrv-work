@@ -1,19 +1,26 @@
 # HRV Work
 
-PWA di biofeedback HRV per Polar H10.
+PWA per biofeedback HRV in tempo reale con Polar H10.
 
-## Funzioni
-- Web Bluetooth diretto dal browser Android
-- HR, RR e RMSSD in tempo reale
-- 6 fasce RMSSD con sfondo rosso → verde
-- Audio OFF / BLEND / CRYSTAL / NATURE
-- I 6 paesaggi NATURE sono incorporati direttamente nell'app
-- Service worker per avvio offline dopo il primo caricamento
+Modalità audio:
+- BLEND
+- FLOW
+- HARMONY
+- RHYTHM
+- NATURE
 
-## URL previsto
+CRYSTAL è stata rimossa.
+
+Fasce RMSSD:
+- <20
+- 20–30
+- 30–40
+- 40–50
+- 50–60
+- >60
+
+Lettura HR/RR via Web Bluetooth; calcolo RMSSD ed elaborazione eseguiti nel browser.
+Gli audio NATURE sono incorporati direttamente nell'app.
+
+GitHub Pages:
 https://tikitak-boop.github.io/hrv-work/
-
-## Installazione Android
-Apri l'URL in Chrome, quindi menu ⋮ → **Installa app**.
-
-Deployment workflow ready.
