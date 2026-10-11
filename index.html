@@ -716,18 +716,47 @@
     return{hr,rrs};
   }
 
+  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+  async function connectGattWithRetry(device,attempts=4){
+    let lastError=null;
+    for(let attempt=1;attempt<=attempts;attempt++){
+      try{
+        if(device.gatt.connected)return device.gatt;
+        statusLine.textContent=attempt===1
+          ? 'Connessione...'
+          : 'Riprovo connessione '+attempt+'/'+attempts+'...';
+        return await device.gatt.connect();
+      }catch(e){
+        lastError=e;
+        if(attempt<attempts)await wait(900+attempt*650);
+      }
+    }
+    throw lastError||new Error('Connection failed');
+  }
+
   connectBtn.addEventListener('click',async()=>{
     try{
+      if(!navigator.bluetooth){
+        throw new Error('Web Bluetooth non disponibile. Apri la pagina in Chrome Android via HTTPS.');
+      }
+
       statusLine.textContent='Ricerca Polar H10...';
       const device=await navigator.bluetooth.requestDevice({
-        filters:[{namePrefix:'Polar H10'}],
+        filters:[
+          {namePrefix:'Polar H10'},
+          {services:['heart_rate']}
+        ],
         optionalServices:['heart_rate']
       });
-      statusLine.textContent='Connessione...';
 
-      const server=await device.gatt.connect();
+      const server=await connectGattWithRetry(device,4);
+
+      statusLine.textContent='Apro servizio cardiaco...';
       const service=await server.getPrimaryService('heart_rate');
       const ch=await service.getCharacteristic('heart_rate_measurement');
+
+      statusLine.textContent='Attivo dati HR/RR...';
       await ch.startNotifications();
 
       ch.addEventListener('characteristicvaluechanged',ev=>{
@@ -754,11 +783,11 @@
       });
 
       device.addEventListener('gattserverdisconnected',()=>{
-        statusLine.textContent='Disconnesso';
+        statusLine.textContent='Polar disconnesso · premi Connetti per riprovare';
         audioBtn.disabled=true;
         stopBlendPad();
         stopFlow();
-        if(audioMode===5) stopNature();
+        if(audioMode===5)stopNature();
       });
 
       audioBtn.disabled=false;
@@ -766,7 +795,14 @@
       updateUI();
 
     }catch(e){
-      statusLine.textContent='Errore: '+e.message;
+      const msg=(e&&e.message)?e.message:String(e);
+      if(/cancel|chooser|user cancelled|canceled/i.test(msg)){
+        statusLine.textContent='Connessione annullata';
+      }else if(/connection failed|connect/i.test(msg)){
+        statusLine.textContent='Connection failed · chiudi altre app Polar/HRV e riprova';
+      }else{
+        statusLine.textContent='Errore: '+msg;
+      }
     }
   });
 
