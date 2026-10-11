@@ -145,7 +145,7 @@
     </div>
   </div>
 
-  <div id="legend">Audio: OFF → BLEND → FLOW → HARMONY → RHYTHM → NATURE</div>
+  <div id="legend">Audio: OFF → BLEND → HARMONY → NATURE</div>
 </div>
 
 <script>
@@ -233,8 +233,8 @@
 
   // ----- AUDIO ------------------------------------------------------------
   let audioCtx=null;
-  let audioMode=0; // 0=OFF, 1=BLEND, 2=FLOW, 3=HARMONY, 4=RHYTHM, 5=NATURE
-  const MODE_NAMES=['OFF','BLEND','FLOW','HARMONY','RHYTHM','NATURE'];
+  let audioMode=0; // 0=OFF, 1=BLEND, 2=HARMONY, 3=NATURE
+  const MODE_NAMES=['OFF','BLEND','HARMONY','NATURE'];
 
   function clamp(v,min,max){return Math.max(min,Math.min(max,v))}
   function rmssdNorm(v){return clamp((v-15)/55,0,1)}
@@ -338,190 +338,130 @@
     }
   }
 
-  // FLOW: continuous soundscape. RMSSD changes timbre, pitch and stereo width smoothly.
-  let flowBus=null;
-  let flowOscs=null;
-  let flowFilters=null;
-  let flowPans=null;
+  // HARMONY: continuous value feedback.
+  // Every new RMSSD value retunes the harmony; no quantisation to the six bands.
+  let harmonyBus=null;
+  let harmonyOscs=null;
+  let harmonyFilters=null;
+  let harmonyPans=null;
 
-  function ensureFlow(){
-    if(flowOscs)return;
-    flowBus=audioCtx.createGain();
-    flowBus.gain.value=.0001;
-    flowBus.connect(audioCtx.destination);
+  function ensureHarmonyPad(){
+    if(harmonyOscs)return;
 
-    flowOscs=[];flowFilters=[];flowPans=[];
-    const ratios=[1,1.5,2];
-    for(let i=0;i<3;i++){
+    harmonyBus=audioCtx.createGain();
+    harmonyBus.gain.value=.0001;
+    harmonyBus.connect(audioCtx.destination);
+
+    harmonyOscs=[];
+    harmonyFilters=[];
+    harmonyPans=[];
+
+    for(let i=0;i<4;i++){
       const o=audioCtx.createOscillator();
       const f=audioCtx.createBiquadFilter();
       const p=audioCtx.createStereoPanner();
-      o.type=i===0?'sine':'triangle';
-      o.frequency.value=140*ratios[i];
-      f.type='lowpass';f.frequency.value=1200;f.Q.value=.30;
-      o.connect(f);f.connect(p);p.connect(flowBus);
+
+      o.type=i<2?'sine':'triangle';
+      f.type='lowpass';
+      f.frequency.value=1100;
+      f.Q.value=.35;
+
+      o.connect(f);
+      f.connect(p);
+      p.connect(harmonyBus);
       o.start();
-      flowOscs.push(o);flowFilters.push(f);flowPans.push(p);
+
+      harmonyOscs.push(o);
+      harmonyFilters.push(f);
+      harmonyPans.push(p);
     }
   }
 
-  function updateFlow(rmssd){
-    if(audioMode!==2||!audioCtx)return;
-    ensureFlow();
-    const now=audioCtx.currentTime;
-    const n=rmssdNorm(rmssd||(currentBand>=0?25+currentBand*10:40));
-    const root=118+n*72;
-    const ratios=[1,1.5,2];
-    const pans=[-.10-(n*.45),.10+(n*.45),0];
+  function harmonyShape(rmssd){
+    // Continuous mapping: every distinct RMSSD creates a slightly different chord.
+    const n=clamp((rmssd-10)/70,0,1);
 
-    flowOscs.forEach((o,i)=>{
+    // Pitch rises gradually with RMSSD.
+    const root=108*Math.pow(2,n*.42);
+
+    // Tense intervals continuously resolve toward consonant intervals.
+    const r2=(16/15)+((5/4)-(16/15))*n;
+    const r3=(7/5)+((3/2)-(7/5))*n;
+    const r4=1.82+(2.0-1.82)*n;
+
+    return {
+      n,
+      root,
+      ratios:[1,r2,r3,r4],
+      cutoff:650+n*2850,
+      spread:.08+n*.52,
+      gain:.016+n*.016
+    };
+  }
+
+  function updateHarmony(rmssd,withPulse=true){
+    if(audioMode!==2||!audioCtx||!Number.isFinite(rmssd))return;
+    ensureHarmonyPad();
+
+    const s=harmonyShape(rmssd);
+    const now=audioCtx.currentTime;
+    const pans=[-s.spread,s.spread,-s.spread*.35,s.spread*.35];
+
+    harmonyOscs.forEach((o,i)=>{
+      const freq=s.root*s.ratios[i];
       o.frequency.cancelScheduledValues(now);
-      o.frequency.setTargetAtTime(root*ratios[i],now,.35);
-      flowFilters[i].frequency.setTargetAtTime(550+n*2550,now,.35);
-      flowPans[i].pan.setTargetAtTime(pans[i],now,.42);
+      o.frequency.setTargetAtTime(freq,now,.18);
+      harmonyFilters[i].frequency.setTargetAtTime(s.cutoff,now,.20);
+      harmonyPans[i].pan.setTargetAtTime(pans[i],now,.22);
     });
-    flowBus.gain.setTargetAtTime(.012+n*.020,now,.45);
+
+    harmonyBus.gain.setTargetAtTime(s.gain,now,.22);
+
+    if(withPulse)playHarmonyValuePulse(rmssd,s);
   }
 
-  function playFlowTransition(index){
+  function playHarmonyValuePulse(rmssd,shape=null){
     if(audioMode!==2||!audioCtx)return;
+    const s=shape||harmonyShape(rmssd);
     const now=audioCtx.currentTime;
-    const base=200+index*35;
-    [1,1.25].forEach((ratio,i)=>{
-      const o=audioCtx.createOscillator();
-      const g=audioCtx.createGain();
-      const f=audioCtx.createBiquadFilter();
-      o.type='sine';
-      f.type='lowpass';f.frequency.value=1600+index*180;
-      o.frequency.setValueAtTime(base*ratio,now);
-      o.frequency.exponentialRampToValueAtTime(base*ratio*2,now+.40);
-      g.gain.setValueAtTime(.0001,now);
-      g.gain.exponentialRampToValueAtTime(.040/(i+1),now+.03);
-      g.gain.exponentialRampToValueAtTime(.0001,now+.55);
-      o.connect(f);f.connect(g);g.connect(audioCtx.destination);
-      o.start(now);o.stop(now+.65);
-    });
-  }
 
-  function stopFlow(){
-    if(flowBus&&audioCtx){
-      flowBus.gain.cancelScheduledValues(audioCtx.currentTime);
-      flowBus.gain.setTargetAtTime(.0001,audioCtx.currentTime,.12);
-    }
-  }
-
-  // HARMONY: low HRV is subtly tense; higher bands become progressively consonant.
-  const harmonyRatiosByBand=[
-    [1,16/15,4/3],
-    [1,6/5,3/2],
-    [1,9/8,3/2],
-    [1,5/4,3/2],
-    [1,4/3,2],
-    [1,3/2,2]
-  ];
-
-  function playHarmonyPulse(index=currentBand){
-    if(audioMode!==3||!audioCtx||index<0)return;
-    const now=audioCtx.currentTime;
-    const base=BANDS[index].root*1.9;
-    const ratios=harmonyRatiosByBand[index];
+    // The pulse pitch also follows the exact RMSSD value, so even changes
+    // inside the same threshold band remain audible.
+    const pulseRoot=260+s.n*440;
+    const ratios=[1,s.ratios[1],s.ratios[2]];
 
     ratios.forEach((ratio,i)=>{
-      const start=now+i*.028;
       const o=audioCtx.createOscillator();
       const g=audioCtx.createGain();
       const f=audioCtx.createBiquadFilter();
+      const p=audioCtx.createStereoPanner();
+
       o.type=i===0?'sine':'triangle';
-      o.frequency.setValueAtTime(base*ratio,start);
-      f.type='bandpass';f.frequency.value=base*ratio;f.Q.value=4.5-i*.7;
-      g.gain.setValueAtTime(.0001,start);
-      g.gain.exponentialRampToValueAtTime(.055/(i+1),start+.015);
-      g.gain.exponentialRampToValueAtTime(.0001,start+.34+i*.09);
-      o.connect(f);f.connect(g);g.connect(audioCtx.destination);
-      o.start(start);o.stop(start+.62);
+      o.frequency.setValueAtTime(pulseRoot*ratio,now);
+      f.type='bandpass';
+      f.frequency.value=pulseRoot*ratio;
+      f.Q.value=4.8-i*.8;
+      p.pan.value=(i-1)*s.spread*.55;
+
+      g.gain.setValueAtTime(.0001,now);
+      g.gain.exponentialRampToValueAtTime((.050+s.n*.018)/(i+1),now+.012);
+      g.gain.exponentialRampToValueAtTime(.0001,now+.30+i*.07);
+
+      o.connect(f);
+      f.connect(p);
+      p.connect(g);
+      g.connect(audioCtx.destination);
+
+      o.start(now);
+      o.stop(now+.56);
     });
   }
 
-  function playHarmonyTransition(index){
-    if(audioMode!==3||!audioCtx)return;
-    const now=audioCtx.currentTime;
-    const base=BANDS[index].root*1.7;
-    const ratios=harmonyRatiosByBand[index];
-
-    ratios.forEach((ratio,i)=>{
-      const start=now+i*.10;
-      const o=audioCtx.createOscillator();
-      const g=audioCtx.createGain();
-      o.type='sine';
-      o.frequency.setValueAtTime(base*ratio,start);
-      g.gain.setValueAtTime(.0001,start);
-      g.gain.exponentialRampToValueAtTime(.070/(1+i*.35),start+.015);
-      g.gain.exponentialRampToValueAtTime(.0001,start+.45);
-      o.connect(g);g.connect(audioCtx.destination);
-      o.start(start);o.stop(start+.58);
-    });
-  }
-
-  // RHYTHM: every heartbeat launches a short pattern; high bands become more regular and fluid.
-  function playNoiseHit(time,volume,tone){
-    const dur=.06;
-    const buffer=audioCtx.createBuffer(1,Math.floor(audioCtx.sampleRate*dur),audioCtx.sampleRate);
-    const data=buffer.getChannelData(0);
-    for(let i=0;i<data.length;i++)data[i]=(Math.random()*2-1)*(1-i/data.length);
-    const source=audioCtx.createBufferSource();
-    const filter=audioCtx.createBiquadFilter();
-    const gain=audioCtx.createGain();
-    source.buffer=buffer;
-    filter.type='bandpass';filter.frequency.value=tone;filter.Q.value=1.2;
-    gain.gain.setValueAtTime(.0001,time);
-    gain.gain.exponentialRampToValueAtTime(volume,time+.008);
-    gain.gain.exponentialRampToValueAtTime(.0001,time+dur);
-    source.connect(filter);filter.connect(gain);gain.connect(audioCtx.destination);
-    source.start(time);source.stop(time+dur);
-  }
-
-  function playPulseHit(time,freq,volume,decay=.12){
-    const o=audioCtx.createOscillator();
-    const g=audioCtx.createGain();
-    o.type='triangle';
-    o.frequency.setValueAtTime(freq,time);
-    o.frequency.exponentialRampToValueAtTime(Math.max(70,freq*.75),time+decay);
-    g.gain.setValueAtTime(.0001,time);
-    g.gain.exponentialRampToValueAtTime(volume,time+.006);
-    g.gain.exponentialRampToValueAtTime(.0001,time+decay);
-    o.connect(g);g.connect(audioCtx.destination);
-    o.start(time);o.stop(time+decay+.02);
-  }
-
-  const rhythmPatterns=[
-    [0,.31,.47],
-    [0,.27,.50],
-    [0,.25,.50],
-    [0,.20,.40,.60],
-    [0,.18,.36,.54,.72],
-    [0,.16,.32,.48,.64]
-  ];
-
-  function playRhythm(index=currentBand){
-    if(audioMode!==4||!audioCtx||index<0)return;
-    const now=audioCtx.currentTime;
-    const hits=rhythmPatterns[index];
-    const baseFreq=150+index*20;
-
-    hits.forEach((delay,i)=>{
-      const t=now+delay;
-      playPulseHit(t,baseFreq+i*18,i===0?.066:.025/(1+i*.12),i===0?.14:.09);
-      playNoiseHit(t,i===0?.018:.011/(1+i*.18),1000+index*220+i*140);
-    });
-  }
-
-  function playRhythmTransition(index){
-    if(audioMode!==4||!audioCtx)return;
-    const now=audioCtx.currentTime;
-    [0,.11,.22].forEach((d,i)=>{
-      playPulseHit(now+d,170+index*22+i*26,.048/(1+i*.15),.10);
-      playNoiseHit(now+d,.016/(1+i*.2),1200+index*180+i*160);
-    });
+  function stopHarmony(){
+    if(harmonyBus&&audioCtx){
+      harmonyBus.gain.cancelScheduledValues(audioCtx.currentTime);
+      harmonyBus.gain.setTargetAtTime(.0001,audioCtx.currentTime,.12);
+    }
   }
 
   // NATURE: six embedded recordings, one for each RMSSD band.
@@ -555,7 +495,7 @@
   }
 
   async function switchNatureBand(index,fadeMs=3500){
-    if(audioMode!==5||index<0)return;
+    if(audioMode!==3||index<0)return;
     if(natureActiveIndex===index)return;
 
     const token=++natureFadeToken;
@@ -598,8 +538,8 @@
 
   function cleanupAudioForModeChange(previousMode,nextMode){
     if(previousMode===1&&nextMode!==1)stopBlendPad();
-    if(previousMode===2&&nextMode!==2)stopFlow();
-    if(previousMode===5&&nextMode!==5)stopNature();
+    if(previousMode===2&&nextMode!==2)stopHarmony();
+    if(previousMode===3&&nextMode!==3)stopNature();
   }
 
   audioBtn.addEventListener('click',async()=>{
@@ -617,13 +557,10 @@
     if(audioMode===1){
       setBlendForBand(idx,false);
     }else if(audioMode===2){
-      updateFlow(currentRMSSD||(25+idx*10));
-      if(currentBand>=0)playFlowTransition(idx);
-    }else if(audioMode===3&&currentBand>=0){
-      playHarmonyTransition(idx);
-    }else if(audioMode===4&&currentBand>=0){
-      playRhythmTransition(idx);
-    }else if(audioMode===5){
+      // HARMONY starts from the exact latest RMSSD, not the band midpoint.
+      updateHarmony(currentRMSSD||35,false);
+      if(currentRMSSD)playHarmonyValuePulse(currentRMSSD);
+    }else if(audioMode===3){
       await switchNatureBand(idx,900);
     }
   });
@@ -632,11 +569,7 @@
     if(audioMode===1){
       playBlendChime(rmssd);
     }else if(audioMode===2){
-      updateFlow(rmssd);
-    }else if(audioMode===3){
-      playHarmonyPulse(currentBand);
-    }else if(audioMode===4){
-      playRhythm(currentBand);
+      updateHarmony(rmssd,true);
     }
   }
 
@@ -657,14 +590,7 @@
 
     if(audioMode===1){
       setBlendForBand(index,old!==-1);
-    }else if(audioMode===2){
-      updateFlow(currentRMSSD||25+index*10);
-      if(old!==-1)playFlowTransition(index);
-    }else if(audioMode===3&&old!==-1){
-      playHarmonyTransition(index);
-    }else if(audioMode===4&&old!==-1){
-      playRhythmTransition(index);
-    }else if(audioMode===5){
+    }else if(audioMode===3){
       switchNatureBand(index,old===-1?900:3500);
     }
 
@@ -786,8 +712,8 @@
         statusLine.textContent='Polar disconnesso · premi Connetti per riprovare';
         audioBtn.disabled=true;
         stopBlendPad();
-        stopFlow();
-        if(audioMode===5)stopNature();
+        stopHarmony();
+        if(audioMode===3)stopNature();
       });
 
       audioBtn.disabled=false;
