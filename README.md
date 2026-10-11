@@ -4,14 +4,12 @@ PWA per biofeedback HRV in tempo reale con Polar H10.
 
 Modalità audio:
 - BLEND
-- FLOW
 - HARMONY
-- RHYTHM
 - NATURE
 
-CRYSTAL è stata rimossa.
+HARMONY usa un mapping continuo dell'RMSSD: ogni nuovo valore RMSSD modifica altezza, intervalli, apertura stereo e brillantezza del feedback, anche senza cambiare fascia.
 
-Fasce RMSSD:
+Fasce RMSSD visuali:
 - <20
 - 20–30
 - 30–40
