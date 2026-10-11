@@ -15,3 +15,5 @@ https://tikitak-boop.github.io/hrv-work/
 
 ## Installazione Android
 Apri l'URL in Chrome, quindi menu ⋮ → **Installa app**.
+
+Deployment workflow ready.
